@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stuck in Place: Stall Diagnosis and Remedies for JEPA Planners</title>
+<meta name="description" content="Unstick: fixed-weight remedies for the planning-loop fixed point behind most failures of JEPA planners.">
+<style>
+body { margin: 0; font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; color: #222; line-height: 1.6; }
+main { max-width: 860px; margin: 0 auto; padding: 48px 20px; }
+h1 { font-size: 2em; line-height: 1.25; text-align: center; margin: 0 0 16px; }
+.authors, .affil { text-align: center; margin: 4px 0; }
+.affil { color: #555; }
+.links { text-align: center; margin: 24px 0 32px; }
+.btn { display: inline-block; margin: 4px; padding: 8px 18px; border-radius: 6px; background: #222; color: #fff; text-decoration: none; }
+.btn:hover { background: #444; }
+figure { margin: 0 0 32px; }
+figure img { width: 100%; height: auto; }
+figcaption { font-size: 0.92em; color: #444; margin-top: 8px; }
+h2 { font-size: 1.3em; margin: 32px 0 8px; }
+pre { background: #f5f5f5; padding: 14px; overflow-x: auto; font-size: 0.85em; }
+</style>
+</head>
+<body>
+<main>
+<h1>Stuck in Place: Stall Diagnosis and Remedies for JEPA Planners</h1>
+<p class="authors">Junhyeok Lee, Dongheon Lee, Kyu Sung Choi</p>
+<p class="affil">Seoul National University</p>
+<p class="links"><a class="btn" href="https://arxiv.org/abs/2611.25415">Paper</a> <a class="btn" href="https://github.com/jhlee0619/unstick">Code</a> <a class="btn" href="https://huggingface.co/jhlee0619/unstick">Models</a></p>
+<figure><img src="teaser.png" alt="Latent costs and frames of one PushObj-T episode for the base GD planner and Unstick-Mem"><figcaption><b>Latent costs and frames of one PushObj-T episode.</b> Top: base GD planner; bottom: Unstick-Mem (weights fixed at test time). Solid: actual latent cost; dashed: predicted after each chunk; arrow: predicted drop per chunk; gray band: stall. Frames: last step; blue: agent; red: agent path during the stall; dashed outline: goal.</figcaption></figure>
+<h2>Abstract</h2>
+<p>Joint-embedding predictive architecture (JEPA) world models plan from pixels with model predictive control, yet often fail on tasks their model should handle. Test-time adaptation attributes such failures to model error under distribution shift and updates the weights on the current episode, without checking this attribution against the planning loop itself. We follow the executed planning loop on pushing tasks. In most settings, with and without distribution shift, nearly all failures (at least 96%) are stalls, where the object stays in place while the model predicts progress. The warm-started gradient-descent (GD) planner then returns nearly the same plan, a fixed point where the agent mostly idles. We propose Unstick, which pairs on-policy fine-tuning before deployment with a fixed-weight loop breaker: a residual memory of the episode&#x27;s prediction errors or random re-initialization at every replan. With GD, Unstick recovers most of the adaptation gain on pushing tasks with the memory, and with re-initialization most of it on shape shifts but much less on visual shifts. A large part of what limits these planners under GD is thus a fixed point of the planning loop, present with and without distribution shift, which a planner with fixed weights can break.</p>
+<h2>BibTeX</h2>
+<pre>@article{lee2026stuck,
+  title   = {Stuck in Place: Stall Diagnosis and Remedies for {JEPA} Planners},
+  author  = {Lee, Junhyeok and Lee, Dongheon and Choi, Kyu Sung},
+  journal = {arXiv preprint arXiv:2611.25415},
+  year    = {2026}
+}</pre>
+</main>
+</body>
+</html>

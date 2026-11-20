@@ -1,0 +1,39 @@
+# Recorded environment of the experiments (Linux). PyTorch 2.3.0 from PyPI is the CUDA 12.1 build.
+# PointMaze additionally needs: pip install --no-deps d4rl==1.1, and the MuJoCo 2.1 binaries (see README).
+name: unstick-eval
+channels:
+  - conda-forge
+dependencies:
+  - python=3.9
+  - ffmpeg=4.3.2
+  - mesalib
+  - patchelf
+  - glew
+  - pip
+  - pip:
+      - torch==2.3.0
+      - torchvision==0.18.0
+      - numpy==1.26.4
+      - hydra-core==1.2.0
+      - omegaconf==2.3.0
+      - einops==0.4.1
+      - gym==0.23.1
+      - pymunk==6.8.0
+      - pygame==2.5.2
+      - shapely==2.0.3
+      - opencv-python==4.6.0.66
+      - decord==0.6.0
+      - imageio==2.34.1
+      - imageio-ffmpeg==0.4.9
+      - scikit-image==0.19.3
+      - scipy==1.13.1
+      - matplotlib==3.5.3
+      - protobuf==3.20.3
+      - pillow==10.3.0
+      - tqdm
+      - psutil
+      - pandas
+      - pyyaml
+      - cython<3
+      - mujoco-py==2.1.2.14
+      - mujoco==3.2.7

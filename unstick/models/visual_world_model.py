@@ -1,0 +1,181 @@
+import torch
+import torch.nn as nn
+from torchvision import transforms
+from einops import rearrange, repeat
+
+
+class VWorldModel(nn.Module):
+    def __init__(
+        self,
+        image_size,  # 224
+        num_hist,
+        num_pred,
+        encoder,
+        proprio_encoder,
+        action_encoder,
+        decoder,
+        predictor,
+        proprio_dim=0,
+        action_dim=0,
+        concat_dim=0,
+        num_action_repeat=7,
+        num_proprio_repeat=7,
+        train_encoder=True,
+        train_predictor=False,
+        train_decoder=True,
+        stop_grad=True,
+        **kwargs,
+    ):
+        super().__init__()
+        self.num_hist = num_hist
+        self.num_pred = num_pred
+        self.encoder = encoder
+        self.proprio_encoder = proprio_encoder
+        self.action_encoder = action_encoder
+        self.decoder = decoder  # decoder could be None (not used for planning)
+        self.predictor = predictor  # predictor could be None
+        self.train_encoder = train_encoder
+        self.train_predictor = train_predictor
+        self.train_decoder = train_decoder
+        self.num_action_repeat = num_action_repeat
+        self.num_proprio_repeat = num_proprio_repeat
+        self.proprio_dim = proprio_dim * num_proprio_repeat 
+        self.action_dim = action_dim * num_action_repeat 
+        self.stop_grad = bool(stop_grad)
+
+        self.concat_dim = concat_dim # 0 or 1
+        assert concat_dim == 0 or concat_dim == 1, f"concat_dim {concat_dim} not supported."
+
+        if "dino" in self.encoder.name:
+            decoder_scale = 16  # from vqvae
+            num_side_patches = image_size // decoder_scale
+            self.encoder_image_size = num_side_patches * encoder.patch_size
+            self.encoder_transform = transforms.Compose(
+                [transforms.Resize(self.encoder_image_size)]
+            )
+        else:
+            # set self.encoder_transform to identity transform
+            self.encoder_transform = lambda x: x
+
+    def train(self, mode=True):
+        super().train(mode)
+        if self.train_encoder:
+            self.encoder.train(mode)
+        if self.predictor is not None and self.train_predictor:
+            self.predictor.train(mode)
+        self.proprio_encoder.train(mode)
+        self.action_encoder.train(mode)
+        if self.decoder is not None and self.train_decoder:
+            self.decoder.train(mode)
+
+    def eval(self):
+        super().eval()
+        self.encoder.eval()
+        if self.predictor is not None:
+            self.predictor.eval()
+        self.proprio_encoder.eval()
+        self.action_encoder.eval()
+        if self.decoder is not None:
+            self.decoder.eval()
+
+    def encode(self, obs, act): 
+        """obs dict (b, t, ...) and act -> z (b, t, num_patches, emb_dim)"""
+        z_dct = self.encode_obs(obs)
+        act_emb = self.encode_act(act)
+        if self.concat_dim == 0:
+            z = torch.cat(
+                    [z_dct['visual'], z_dct['proprio'].unsqueeze(2), act_emb.unsqueeze(2)], dim=2 # add as an extra token
+                )  # (b, num_frames, num_patches + 2, dim)
+        if self.concat_dim == 1:
+            proprio_tiled = repeat(z_dct['proprio'].unsqueeze(2), "b t 1 a -> b t f a", f=z_dct['visual'].shape[2])
+            proprio_repeated = proprio_tiled.repeat(1, 1, 1, self.num_proprio_repeat)
+            act_tiled = repeat(act_emb.unsqueeze(2), "b t 1 a -> b t f a", f=z_dct['visual'].shape[2])
+            act_repeated = act_tiled.repeat(1, 1, 1, self.num_action_repeat)
+            z = torch.cat(
+                [z_dct['visual'], proprio_repeated, act_repeated], dim=3
+            )  # (b, num_frames, num_patches, dim + action_dim)
+        return z
+    
+    def encode_act(self, act):
+        act = self.action_encoder(act) # (b, num_frames, action_emb_dim)
+        return act
+    
+    def encode_proprio(self, proprio):
+        proprio = self.proprio_encoder(proprio)
+        return proprio
+
+    def encode_obs(self, obs):
+        """obs dict (b, t, ...) -> {"visual": (b, t, num_patches, emb_dim), "proprio": (b, t, proprio_emb_dim)}"""
+        visual = obs['visual']
+        b = visual.shape[0]
+        visual = rearrange(visual, "b t ... -> (b t) ...")
+        visual = self.encoder_transform(visual)
+        visual_embs = self.encoder.forward(visual)
+        visual_embs = rearrange(visual_embs, "(b t) p d -> b t p d", b=b)
+
+        proprio = obs['proprio']
+        proprio_emb = self.encode_proprio(proprio)
+        return {"visual": visual_embs, "proprio": proprio_emb}
+
+    def predict(self, z):  # in embedding space
+        """z (b, num_hist, num_patches, emb_dim) -> next-step z, same shape"""
+        T = z.shape[1]
+        # reshape to a batch of windows of inputs
+        z = rearrange(z, "b t p d -> b (t p) d")
+        # (b, num_hist * num_patches per img, emb_dim)
+        z = self.predictor(z)
+        z = rearrange(z, "b (t p) d -> b t p d", t=T)
+        return z
+
+    def separate_emb(self, z):
+        """z -> (z_obs dict, z_act)"""
+        if self.concat_dim == 0:
+            z_visual, z_proprio, z_act = z[:, :, :-2, :], z[:, :, -2, :], z[:, :, -1, :]
+        elif self.concat_dim == 1:
+            z_visual, z_proprio, z_act = z[..., :-(self.proprio_dim + self.action_dim)], \
+                                         z[..., -(self.proprio_dim + self.action_dim) :-self.action_dim],  \
+                                         z[..., -self.action_dim:]
+            # remove tiled dimensions
+            z_proprio = z_proprio[:, :, 0, : self.proprio_dim // self.num_proprio_repeat]
+            z_act = z_act[:, :, 0, : self.action_dim // self.num_action_repeat]
+        z_obs = {"visual": z_visual, "proprio": z_proprio}
+        return z_obs, z_act
+
+    def replace_actions_from_z(self, z, act):
+        act_emb = self.encode_act(act)
+        if self.concat_dim == 0:
+            z[:, :, -1, :] = act_emb
+        elif self.concat_dim == 1:
+            act_tiled = repeat(act_emb.unsqueeze(2), "b t 1 a -> b t f a", f=z.shape[2])
+            act_repeated = act_tiled.repeat(1, 1, 1, self.num_action_repeat)
+            z[..., -self.action_dim:] = act_repeated
+        return z
+
+
+    def rollout(self, obs_0, act):
+        """obs_0 dict (b, n, ...), act (b, t+n, action_dim) -> (z_obses, z), z: (b, t+n+1, num_patches, emb_dim)"""
+        num_obs_init = obs_0['visual'].shape[1]
+        act_0 = act[:, :num_obs_init]
+        action = act[:, num_obs_init:] 
+        z = self.encode(obs_0, act_0)
+        erm = getattr(self, "erm", None)  # planning/erm.py: frame p = f(...) + correction(frame p-1, action p-1)
+        t = 0
+        inc = 1
+        while t < action.shape[1]:
+            z_pred = self.predict(z[:, -self.num_hist :])
+            z_new = z_pred[:, -inc:, ...]
+            if erm is not None:
+                p = z.shape[1]
+                z_new = erm.correct(self, z_new, z[:, p - 1 : p], act[:, p - 1 : p])
+            z_new = self.replace_actions_from_z(z_new, action[:, t : t + inc, :])
+            z = torch.cat([z, z_new], dim=1)
+            t += inc
+
+        z_pred = self.predict(z[:, -self.num_hist :])
+        z_new = z_pred[:, -1 :, ...] # take only the next pred
+        if erm is not None:
+            p = z.shape[1]
+            z_new = erm.correct(self, z_new, z[:, p - 1 : p], act[:, p - 1 : p])
+        z = torch.cat([z, z_new], dim=1)
+        z_obses, z_acts = self.separate_emb(z)
+        return z_obses, z
